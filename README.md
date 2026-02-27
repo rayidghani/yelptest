@@ -92,6 +92,9 @@ Required:
 export LATTE_ART_MODEL_PATH=/path/to/your/model
 export LATTE_ART_CALL_ENDPOINT=serving_default   # optional; for SavedModel endpoint selection
 # If you get endpoint errors, try: export LATTE_ART_CALL_ENDPOINT=serve
+export LATTE_ART_INPUT_HEIGHT=224             # optional; use if model input shape cannot be inferred
+export LATTE_ART_INPUT_WIDTH=224
+export LATTE_ART_INPUT_CHANNELS=3
 ```
 
 Optional:
@@ -124,6 +127,7 @@ python latte_art_ranker.py \
   --location "San Francisco, CA" \
   --model-path /path/to/your/model \
   --call-endpoint serving_default \
+  --input-height 224 --input-width 224 --input-channels 3 \
   --business-limit 20 \
   --score-threshold 0.70 \
   --source scrape \
@@ -132,6 +136,7 @@ python latte_art_ranker.py \
 
 Notes:
 - For SavedModel directories, Keras 3 may require endpoint selection; if `serving_default` is missing, try `serve` via `LATTE_ART_CALL_ENDPOINT` (or `--call-endpoint` in CLI).
+- If your SavedModel has no signatures/endpoints, set manual shape overrides (`LATTE_ART_INPUT_HEIGHT`, `LATTE_ART_INPUT_WIDTH`, `LATTE_ART_INPUT_CHANNELS` or CLI equivalents).
 - Use `--source api` with `--yelp-api-key` (or `YELP_API_KEY`) if you want Yelp Fusion API mode.
 - Use `--include-non-drink-photos` to score all discovered photos.
 

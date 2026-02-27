@@ -222,7 +222,14 @@ class YelpScrapeProvider:
 
 
 class LatteArtModel:
-    def __init__(self, model_path: str, call_endpoint: str = "serving_default"):
+    def __init__(
+        self,
+        model_path: str,
+        call_endpoint: str = "serving_default",
+        input_height: int | None = None,
+        input_width: int | None = None,
+        input_channels: int | None = None,
+    ):
         try:
             import tensorflow as tf  # noqa: PLC0415
         except ImportError as exc:
@@ -235,6 +242,7 @@ class LatteArtModel:
         self.call_endpoint = call_endpoint
         self.input_key: str | None = None
 
+        shape = None
         try:
             self.model = tf.keras.models.load_model(model_path)
             LOGGER.info("Loaded model with keras.models.load_model: %s", model_path)
@@ -251,11 +259,35 @@ class LatteArtModel:
             )
             shape = self._configure_saved_model_predictor(model_path, call_endpoint)
 
-        if len(shape) != 4:
-            raise ValueError(f"Expected NHWC model input, got {shape}")
+        if shape is None or len(shape) != 4:
+            shape = self._shape_from_overrides(input_height, input_width, input_channels, shape)
+
         self.input_height = int(shape[1])
         self.input_width = int(shape[2])
         self.channels = int(shape[3])
+
+    def _shape_from_overrides(
+        self,
+        input_height: int | None,
+        input_width: int | None,
+        input_channels: int | None,
+        original_shape,
+    ):
+        if input_height and input_width and input_channels:
+            LOGGER.warning(
+                "Using manual input shape overrides: (%d, %d, %d)",
+                input_height,
+                input_width,
+                input_channels,
+            )
+            return (None, input_height, input_width, input_channels)
+
+        raise RuntimeError(
+            "Could not infer model input shape from this SavedModel format. "
+            "Provide input shape overrides via --input-height/--input-width/--input-channels "
+            "or LATTE_ART_INPUT_HEIGHT/LATTE_ART_INPUT_WIDTH/LATTE_ART_INPUT_CHANNELS. "
+            f"Observed shape: {original_shape}"
+        )
 
     def _shape_from_signature(self, signature: object) -> tuple[object, str | None]:
         _, kw = signature.structured_input_signature
@@ -263,6 +295,14 @@ class LatteArtModel:
             raise RuntimeError("SavedModel signature has no keyword input tensors.")
         input_key = next(iter(kw.keys()))
         return kw[input_key].shape, input_key
+
+    def _shape_from_callable(self, fn: object):
+        function_spec = getattr(fn, "function_spec", None)
+        if function_spec and getattr(function_spec, "input_signature", None):
+            sig = function_spec.input_signature
+            if sig and len(sig) > 0 and hasattr(sig[0], "shape"):
+                return sig[0].shape
+        return None
 
     def _configure_saved_model_predictor(self, model_path: str, call_endpoint: str):
         saved = self.tf.saved_model.load(model_path)
@@ -285,6 +325,11 @@ class LatteArtModel:
             self.predict_fn = lambda batch: signature(**{self.input_key: batch})
             return shape
 
+        if callable(saved):
+            LOGGER.warning("SavedModel has no signatures; using callable loaded object directly.")
+            self.predict_fn = lambda batch: saved(batch)
+            return self._shape_from_callable(getattr(saved, "__call__", saved))
+
         LOGGER.warning(
             "SavedModel signatures are empty. Attempting keras.layers.TFSMLayer endpoint resolution."
         )
@@ -294,12 +339,12 @@ class LatteArtModel:
             try:
                 layer = self.tf.keras.layers.TFSMLayer(model_path, call_endpoint=candidate)
                 fn = getattr(layer, "_call_endpoint_fn", None)
-                if fn is None:
-                    continue
-                shape, self.input_key = self._shape_from_signature(fn)
                 self.predict_fn = lambda batch, lyr=layer: lyr(batch)
                 LOGGER.info("Using TFSMLayer endpoint '%s'", candidate)
-                return shape
+                if fn is not None:
+                    shape, self.input_key = self._shape_from_signature(fn)
+                    return shape
+                return None
             except Exception as exc:  # best-effort endpoint probing
                 last_error = exc
                 continue
@@ -503,6 +548,9 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--location", required=True, help="Location string for Yelp search")
     parser.add_argument("--model-path", required=True, help="Path to TensorFlow model")
     parser.add_argument("--call-endpoint", default=os.getenv("LATTE_ART_CALL_ENDPOINT", "serving_default"), help="SavedModel call endpoint for Keras 3 fallback (default: serving_default)")
+    parser.add_argument("--input-height", type=int, default=int(os.getenv("LATTE_ART_INPUT_HEIGHT", "0")) or None, help="Manual model input height when shape cannot be inferred")
+    parser.add_argument("--input-width", type=int, default=int(os.getenv("LATTE_ART_INPUT_WIDTH", "0")) or None, help="Manual model input width when shape cannot be inferred")
+    parser.add_argument("--input-channels", type=int, default=int(os.getenv("LATTE_ART_INPUT_CHANNELS", "0")) or None, help="Manual model input channels when shape cannot be inferred")
     parser.add_argument(
         "--source",
         choices=["api", "scrape"],
@@ -536,7 +584,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         provider = YelpScrapeProvider()
 
-    model = LatteArtModel(model_path=args.model_path, call_endpoint=args.call_endpoint)
+    model = LatteArtModel(
+        model_path=args.model_path,
+        call_endpoint=args.call_endpoint,
+        input_height=args.input_height,
+        input_width=args.input_width,
+        input_channels=args.input_channels,
+    )
 
     results = build_results(
         provider=provider,

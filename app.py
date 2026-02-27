@@ -46,8 +46,22 @@ def get_model() -> LatteArtModel:
     if not model_path:
         raise RuntimeError("LATTE_ART_MODEL_PATH is not set.")
     call_endpoint = os.getenv("LATTE_ART_CALL_ENDPOINT", "serving_default").strip()
-    LOGGER.info("Loading TensorFlow model from %s (endpoint=%s)", model_path, call_endpoint)
-    return LatteArtModel(model_path=model_path, call_endpoint=call_endpoint)
+    input_height = _int_env("LATTE_ART_INPUT_HEIGHT", 0) or None
+    input_width = _int_env("LATTE_ART_INPUT_WIDTH", 0) or None
+    input_channels = _int_env("LATTE_ART_INPUT_CHANNELS", 0) or None
+    LOGGER.info(
+        "Loading TensorFlow model from %s (endpoint=%s, override_shape=%s)",
+        model_path,
+        call_endpoint,
+        (input_height, input_width, input_channels),
+    )
+    return LatteArtModel(
+        model_path=model_path,
+        call_endpoint=call_endpoint,
+        input_height=input_height,
+        input_width=input_width,
+        input_channels=input_channels,
+    )
 
 
 def get_provider():

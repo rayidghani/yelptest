@@ -12,6 +12,7 @@ import argparse
 import csv
 import io
 import json
+import logging
 import os
 import re
 import sys
@@ -27,6 +28,14 @@ from PIL import Image
 
 YELP_API_BASE = "https://api.yelp.com/v3"
 YELP_WEB_BASE = "https://www.yelp.com"
+LOGGER = logging.getLogger(__name__)
+
+
+def configure_logging(level: str = "INFO") -> None:
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    )
 
 
 @dataclass
@@ -60,6 +69,7 @@ class YelpApiProvider:
         self.timeout_s = timeout_s
 
     def search_espresso(self, location: str, limit: int) -> List[BusinessSummary]:
+        LOGGER.info("[1/6] API search: term='espresso', location='%s', limit=%d", location, limit)
         params = {
             "term": "espresso",
             "location": location,
@@ -71,9 +81,11 @@ class YelpApiProvider:
         )
         resp.raise_for_status()
         businesses = resp.json().get("businesses", [])
+        LOGGER.info("API search returned %d businesses", len(businesses))
         return [BusinessSummary(id=b["id"]) for b in businesses if b.get("id")]
 
     def business_details(self, business_id: str) -> dict:
+        LOGGER.info("Fetching business details via API: %s", business_id)
         resp = self.session.get(
             f"{YELP_API_BASE}/businesses/{business_id}", timeout=self.timeout_s
         )
@@ -104,6 +116,7 @@ class YelpScrapeProvider:
         self.timeout_s = timeout_s
 
     def search_espresso(self, location: str, limit: int) -> List[BusinessSummary]:
+        LOGGER.info("[1/6] Scrape search: term='espresso', location='%s', limit=%d", location, limit)
         ids: List[str] = []
         start = 0
         while len(ids) < limit:
@@ -133,9 +146,11 @@ class YelpScrapeProvider:
                 break
             time.sleep(0.25)
 
+        LOGGER.info("Scrape search discovered %d businesses", len(ids[:limit]))
         return [BusinessSummary(id=i) for i in ids[:limit]]
 
     def business_details(self, business_id: str) -> dict:
+        LOGGER.info("Fetching business details via scrape: %s", business_id)
         biz_url = f"{YELP_WEB_BASE}/biz/{business_id}"
         resp = self.session.get(biz_url, timeout=self.timeout_s)
         resp.raise_for_status()
@@ -211,7 +226,8 @@ class LatteArtModel:
             import tensorflow as tf  # noqa: PLC0415
         except ImportError as exc:
             raise RuntimeError(
-                "TensorFlow is not installed. Install it to run scoring."
+                "TensorFlow is not installed/compatible in this environment. "
+                "Install from requirements-tensorflow.txt or use tensorflow-macos on Apple Silicon."
             ) from exc
 
         self.tf = tf
@@ -270,10 +286,12 @@ def score_business_photos(
     timeout_s: int,
 ) -> tuple[float, int, int]:
     photos = details.get("photos") or []
+    LOGGER.info("[3/6] Retrieved %d photo candidates for '%s'", len(photos), details.get("name", ""))
     if not include_non_drink_photos:
         filtered = [p for p in photos if is_likely_drink_photo(p)]
         if filtered:
             photos = filtered
+    LOGGER.info("[3/6] %d photos selected for scoring", len(photos))
 
     session = requests.Session()
     scores: List[float] = []
@@ -281,18 +299,22 @@ def score_business_photos(
     for photo_url in photos:
         image_bytes = download_image(session, photo_url, timeout_s=timeout_s)
         if image_bytes is None:
+            LOGGER.debug("Skipping photo download failure: %s", photo_url)
             continue
         try:
             score = model.score_image_bytes(image_bytes)
         except Exception:
+            LOGGER.exception("Model scoring failed for photo: %s", photo_url)
             continue
         scores.append(score)
         if score >= score_threshold:
             above += 1
 
     if not scores:
+        LOGGER.info("No scorable photos for '%s'", details.get("name", ""))
         return 0.0, 0, 0
 
+    LOGGER.info("[4/6] Scored %d photos, %d above threshold", len(scores), above)
     return sum(scores) / len(scores), len(scores), above
 
 
@@ -305,13 +327,17 @@ def build_results(
     include_non_drink_photos: bool,
     sleep_s: float,
 ) -> List[BusinessResult]:
+    LOGGER.info("Starting ranking run for location='%s'", location)
     businesses = provider.search_espresso(location=location, limit=business_limit)
+    LOGGER.info("[2/6] Processing %d businesses", len(businesses))
     out: List[BusinessResult] = []
 
-    for b in businesses:
+    for idx, b in enumerate(businesses, start=1):
+        LOGGER.info("Processing business %d/%d (%s)", idx, len(businesses), b.id)
         try:
             details = provider.business_details(b.id)
         except requests.RequestException:
+            LOGGER.exception("Failed to fetch details for business id=%s", b.id)
             continue
 
         agg, downloaded, above = score_business_photos(
@@ -333,14 +359,23 @@ def build_results(
                 images_above_threshold=above,
             )
         )
+        LOGGER.info(
+            "[5/6] Aggregated '%s': score=%.4f, downloaded=%d, above_threshold=%d",
+            details.get("name", ""),
+            agg,
+            downloaded,
+            above,
+        )
         if sleep_s > 0:
             time.sleep(sleep_s)
 
     out.sort(key=lambda x: x.aggregate_score, reverse=True)
+    LOGGER.info("[6/6] Ranking complete: %d businesses in output", len(out))
     return out
 
 
 def write_csv(path: Path, results: Sequence[BusinessResult]) -> None:
+    LOGGER.info("Writing CSV to %s", path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -412,7 +447,9 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    configure_logging(os.getenv("LOG_LEVEL", "INFO"))
     args = parse_args(argv or sys.argv[1:])
+    LOGGER.info("CLI started with source=%s, limit=%d, threshold=%.3f", args.source, args.business_limit, args.score_threshold)
 
     if args.source == "api":
         if not args.yelp_api_key:
@@ -437,6 +474,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     write_csv(args.output_csv, results)
     print_results(results, top_n=args.top_n)
     print(f"\nSaved CSV: {args.output_csv}")
+    LOGGER.info("CLI run finished successfully")
     return 0
 
 

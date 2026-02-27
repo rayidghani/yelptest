@@ -1,6 +1,10 @@
 # Optional ML dependencies (install after requirements.txt)
 # Recommended Python: 3.10 or 3.11 for best TensorFlow wheel availability.
 
-tensorflow-macos>=2.12.0; platform_system == "Darwin" and platform_machine == "arm64" and python_version < "3.13"
+# macOS (both ARM64 and x86_64): prefer tensorflow-macos package line.
+tensorflow-macos>=2.12.0; platform_system == "Darwin" and python_version < "3.13"
+# Metal acceleration is available on Apple Silicon.
 tensorflow-metal>=1.1.0; platform_system == "Darwin" and platform_machine == "arm64" and python_version < "3.13"
-tensorflow>=2.12.0; not (platform_system == "Darwin" and platform_machine == "arm64") and python_version < "3.13"
+
+# Non-macOS platforms use the standard tensorflow wheel.
+tensorflow>=2.12.0; platform_system != "Darwin" and python_version < "3.13"

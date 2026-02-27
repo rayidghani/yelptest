@@ -24,15 +24,63 @@ Then it fetches Yelp businesses, scores photos with your TensorFlow model, shows
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.10 or 3.11 recommended (TensorFlow wheel compatibility)
 - TensorFlow model file/folder path available on disk
 
 ## Setup
 
+### Standard setup (Linux/Windows/macOS Intel)
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
+pip install -r requirements-tensorflow.txt
+```
+
+### Apple Silicon (M1/M2/M3) setup
+
+If you see AVX/jaxlib errors or TensorFlow install failures, use an ARM64 Python + Apple TensorFlow packages:
+
+```bash
+# Verify you're on arm64 Python (should print arm64)
+python -c "import platform; print(platform.machine())"
+
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+
+# Install app deps first
+pip install -r requirements.txt
+
+# Remove incompatible x86 wheels if present
+pip uninstall -y tensorflow tensorflow-cpu tensorflow-intel jax jaxlib
+
+# Install Apple Silicon TensorFlow stack
+pip install tensorflow-macos tensorflow-metal
+```
+
+### If `tensorflow` says "No matching distribution found"
+
+This usually means one of these:
+- you are on Python 3.12+/3.13 where your TensorFlow wheel is unavailable,
+- or you're on macOS with an x86/ARM mismatch.
+
+Use Python 3.10 or 3.11, then reinstall:
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+pip install -r requirements.txt
+pip install -r requirements-tensorflow.txt
+```
+
+On macOS, also verify architecture:
+
+```bash
+python -c "import platform; print(platform.machine())"  # should be arm64 on Apple Silicon
 ```
 
 ## Environment variables
@@ -53,6 +101,7 @@ export DEFAULT_BUSINESS_LIMIT=20
 export DEFAULT_SCORE_THRESHOLD=0.7
 export REQUEST_TIMEOUT_S=20
 export REQUEST_SLEEP_S=0.2
+export LOG_LEVEL=INFO
 ```
 
 ## Web usage
@@ -95,6 +144,8 @@ Use `python app.py` as start command and set env vars in your deployment setting
 
 ## Caveats
 
+- On Apple Silicon, use ARM64 Python plus `tensorflow-macos`/`tensorflow-metal` to avoid AVX/jaxlib x86 wheel crashes.
+- Console logging is enabled for both CLI and web app; adjust verbosity with `LOG_LEVEL` (e.g., `DEBUG`, `INFO`).
 - Scraping mode is best-effort and may break if Yelp markup changes.
 - Confirm Yelp Terms of Service compliance for your usage.
 - Latte/drink photo filtering remains heuristic unless your model handles non-drink photos robustly.

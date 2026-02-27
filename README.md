@@ -29,10 +29,34 @@ Then it fetches Yelp businesses, scores photos with your TensorFlow model, shows
 
 ## Setup
 
+### Standard setup (Linux/Windows/macOS Intel)
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+```
+
+### Apple Silicon (M1/M2/M3) setup
+
+If you see AVX/jaxlib errors, use an ARM64 Python + Apple TensorFlow packages:
+
+```bash
+# Verify you're on arm64 Python (should print arm64)
+python -c "import platform; print(platform.machine())"
+
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+
+# Remove incompatible x86 wheels if present
+pip uninstall -y tensorflow tensorflow-cpu tensorflow-intel jax jaxlib
+
+# Install Apple Silicon TensorFlow stack
+pip install tensorflow-macos tensorflow-metal
+
+# Install remaining app deps
+pip install Flask requests beautifulsoup4 Pillow
 ```
 
 ## Environment variables
@@ -96,6 +120,7 @@ Use `python app.py` as start command and set env vars in your deployment setting
 
 ## Caveats
 
+- On Apple Silicon, use ARM64 Python plus `tensorflow-macos`/`tensorflow-metal` to avoid AVX/jaxlib x86 wheel crashes.
 - Console logging is enabled for both CLI and web app; adjust verbosity with `LOG_LEVEL` (e.g., `DEBUG`, `INFO`).
 - Scraping mode is best-effort and may break if Yelp markup changes.
 - Confirm Yelp Terms of Service compliance for your usage.

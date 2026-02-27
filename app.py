@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import csv
 import io
-import logging
 import os
 from functools import lru_cache
 from typing import List
@@ -18,12 +17,9 @@ from latte_art_ranker import (
     YelpApiProvider,
     YelpScrapeProvider,
     build_results,
-    configure_logging,
 )
 
 app = Flask(__name__)
-LOGGER = logging.getLogger(__name__)
-configure_logging(os.getenv("LOG_LEVEL", "INFO"))
 
 
 def _int_env(name: str, default: int) -> int:
@@ -45,14 +41,12 @@ def get_model() -> LatteArtModel:
     model_path = os.getenv("LATTE_ART_MODEL_PATH", "").strip()
     if not model_path:
         raise RuntimeError("LATTE_ART_MODEL_PATH is not set.")
-    LOGGER.info("Loading TensorFlow model from %s", model_path)
     return LatteArtModel(model_path=model_path)
 
 
 def get_provider():
     source = os.getenv("YELP_SOURCE", "scrape").strip().lower()
     timeout = _int_env("REQUEST_TIMEOUT_S", 20)
-    LOGGER.info("Selecting provider source=%s timeout=%ss", source, timeout)
     if source == "api":
         api_key = os.getenv("YELP_API_KEY", "").strip()
         if not api_key:
@@ -133,12 +127,6 @@ def run():
         )
 
     try:
-        LOGGER.info(
-            "Web run requested: location='%s', business_limit=%d, threshold=%.3f",
-            location,
-            business_limit,
-            score_threshold,
-        )
         model = get_model()
         provider = get_provider()
         results = build_results(
@@ -151,10 +139,8 @@ def run():
             sleep_s=_float_env("REQUEST_SLEEP_S", 0.2),
         )
     except Exception as exc:
-        LOGGER.exception("Web run failed")
         return render_template("index.html", error=str(exc), defaults=request.form)
 
-    LOGGER.info("Web run complete: %d result rows", len(results))
     csv_text = results_to_csv(results)
     return render_template(
         "index.html",
@@ -173,9 +159,7 @@ def healthz():
 def download():
     csv_text = request.form.get("csv_text", "")
     if not csv_text:
-        LOGGER.warning("Download requested without CSV payload")
         return redirect(url_for("index"))
-    LOGGER.info("CSV download requested")
     return Response(
         csv_text,
         mimetype="text/csv",

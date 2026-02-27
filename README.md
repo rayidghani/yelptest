@@ -91,6 +91,7 @@ Required:
 ```bash
 export LATTE_ART_MODEL_PATH=/path/to/your/model
 export LATTE_ART_CALL_ENDPOINT=serving_default   # optional; for SavedModel endpoint selection
+# If you get endpoint errors, try: export LATTE_ART_CALL_ENDPOINT=serve
 ```
 
 Optional:
@@ -130,6 +131,7 @@ python latte_art_ranker.py \
 ```
 
 Notes:
+- For SavedModel directories, Keras 3 may require endpoint selection; if `serving_default` is missing, try `serve` via `LATTE_ART_CALL_ENDPOINT` (or `--call-endpoint` in CLI).
 - Use `--source api` with `--yelp-api-key` (or `YELP_API_KEY`) if you want Yelp Fusion API mode.
 - Use `--include-non-drink-photos` to score all discovered photos.
 

@@ -246,29 +246,69 @@ class LatteArtModel:
             if "File format not supported" not in str(exc):
                 raise
             LOGGER.warning(
-                "Keras load_model could not load '%s'. Falling back to SavedModel signature '%s'.",
+                "Keras load_model could not load '%s'. Falling back to SavedModel/TFSMLayer.",
                 model_path,
-                call_endpoint,
             )
-            saved = tf.saved_model.load(model_path)
-            if call_endpoint not in saved.signatures:
-                available = ", ".join(saved.signatures.keys())
-                raise RuntimeError(
-                    f"SavedModel endpoint '{call_endpoint}' not found. Available endpoints: {available}"
-                )
-            signature = saved.signatures[call_endpoint]
-            _, kw = signature.structured_input_signature
-            if not kw:
-                raise RuntimeError("SavedModel signature has no keyword input tensors.")
-            self.input_key = next(iter(kw.keys()))
-            shape = kw[self.input_key].shape
-            self.predict_fn = lambda batch: signature(**{self.input_key: batch})
+            shape = self._configure_saved_model_predictor(model_path, call_endpoint)
 
         if len(shape) != 4:
             raise ValueError(f"Expected NHWC model input, got {shape}")
         self.input_height = int(shape[1])
         self.input_width = int(shape[2])
         self.channels = int(shape[3])
+
+    def _shape_from_signature(self, signature: object) -> tuple[object, str | None]:
+        _, kw = signature.structured_input_signature
+        if not kw:
+            raise RuntimeError("SavedModel signature has no keyword input tensors.")
+        input_key = next(iter(kw.keys()))
+        return kw[input_key].shape, input_key
+
+    def _configure_saved_model_predictor(self, model_path: str, call_endpoint: str):
+        saved = self.tf.saved_model.load(model_path)
+        signatures = getattr(saved, "signatures", {})
+
+        endpoint_to_use = None
+        if call_endpoint in signatures:
+            endpoint_to_use = call_endpoint
+        elif signatures:
+            endpoint_to_use = next(iter(signatures.keys()))
+            LOGGER.warning(
+                "SavedModel endpoint '%s' not found. Falling back to first available endpoint '%s'.",
+                call_endpoint,
+                endpoint_to_use,
+            )
+
+        if endpoint_to_use is not None:
+            signature = signatures[endpoint_to_use]
+            shape, self.input_key = self._shape_from_signature(signature)
+            self.predict_fn = lambda batch: signature(**{self.input_key: batch})
+            return shape
+
+        LOGGER.warning(
+            "SavedModel signatures are empty. Attempting keras.layers.TFSMLayer endpoint resolution."
+        )
+        endpoint_candidates = [call_endpoint, "serve", "serving_default"]
+        last_error = None
+        for candidate in endpoint_candidates:
+            try:
+                layer = self.tf.keras.layers.TFSMLayer(model_path, call_endpoint=candidate)
+                fn = getattr(layer, "_call_endpoint_fn", None)
+                if fn is None:
+                    continue
+                shape, self.input_key = self._shape_from_signature(fn)
+                self.predict_fn = lambda batch, lyr=layer: lyr(batch)
+                LOGGER.info("Using TFSMLayer endpoint '%s'", candidate)
+                return shape
+            except Exception as exc:  # best-effort endpoint probing
+                last_error = exc
+                continue
+
+        raise RuntimeError(
+            "Could not resolve a callable SavedModel endpoint. "
+            "Try setting --call-endpoint / LATTE_ART_CALL_ENDPOINT to your exported endpoint "
+            "(commonly 'serve' or 'serving_default')."
+        ) from last_error
 
     def _extract_score(self, pred: object) -> float:
         if isinstance(pred, dict):

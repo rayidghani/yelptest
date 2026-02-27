@@ -24,7 +24,7 @@ Then it fetches Yelp businesses, scores photos with your TensorFlow model, shows
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.10 or 3.11 recommended (TensorFlow wheel compatibility)
 - TensorFlow model file/folder path available on disk
 
 ## Setup
@@ -34,12 +34,14 @@ Then it fetches Yelp businesses, scores photos with your TensorFlow model, shows
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
+pip install -r requirements-tensorflow.txt
 ```
 
 ### Apple Silicon (M1/M2/M3) setup
 
-If you see AVX/jaxlib errors, use an ARM64 Python + Apple TensorFlow packages:
+If you see AVX/jaxlib errors or TensorFlow install failures, use an ARM64 Python + Apple TensorFlow packages:
 
 ```bash
 # Verify you're on arm64 Python (should print arm64)
@@ -49,14 +51,26 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip setuptools wheel
 
+# Install app deps first
+pip install -r requirements.txt
+
 # Remove incompatible x86 wheels if present
 pip uninstall -y tensorflow tensorflow-cpu tensorflow-intel jax jaxlib
 
 # Install Apple Silicon TensorFlow stack
 pip install tensorflow-macos tensorflow-metal
+```
 
-# Install remaining app deps
-pip install Flask requests beautifulsoup4 Pillow
+### If `tensorflow` says "No matching distribution found"
+
+Your Python version likely has no published wheel yet (common on very new Python releases).
+Use Python 3.10 or 3.11, recreate the venv, then reinstall:
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+pip install -r requirements-tensorflow.txt
 ```
 
 ## Environment variables

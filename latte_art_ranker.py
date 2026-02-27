@@ -226,7 +226,8 @@ class LatteArtModel:
             import tensorflow as tf  # noqa: PLC0415
         except ImportError as exc:
             raise RuntimeError(
-                "TensorFlow is not installed. Install it to run scoring."
+                "TensorFlow is not installed/compatible in this environment. "
+                "Install from requirements-tensorflow.txt or use tensorflow-macos on Apple Silicon."
             ) from exc
 
         self.tf = tf

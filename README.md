@@ -137,8 +137,20 @@ python latte_art_ranker.py \
 Notes:
 - For SavedModel directories, Keras 3 may require endpoint selection; if `serving_default` is missing, try `serve` via `LATTE_ART_CALL_ENDPOINT` (or `--call-endpoint` in CLI).
 - If your SavedModel has no signatures/endpoints, set manual shape overrides (`LATTE_ART_INPUT_HEIGHT`, `LATTE_ART_INPUT_WIDTH`, `LATTE_ART_INPUT_CHANNELS` or CLI equivalents).
+- If you still see `Available endpoints: []`, your SavedModel may expose only callable attributes. The loader now probes common callables automatically; if shape inference still fails, set the three input-shape overrides.
 - Use `--source api` with `--yelp-api-key` (or `YELP_API_KEY`) if you want Yelp Fusion API mode.
 - Use `--include-non-drink-photos` to score all discovered photos.
+
+
+To inspect available SavedModel signatures locally:
+
+```bash
+python - <<'PY'
+import tensorflow as tf
+model = tf.saved_model.load('/path/to/your/model')
+print('signatures:', list(model.signatures.keys()))
+PY
+```
 
 ## Deploy notes
 

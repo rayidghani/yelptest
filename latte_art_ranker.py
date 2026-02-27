@@ -289,12 +289,17 @@ class LatteArtModel:
             f"Observed shape: {original_shape}"
         )
 
-    def _shape_from_signature(self, signature: object) -> tuple[object, str | None]:
-        _, kw = signature.structured_input_signature
-        if not kw:
-            raise RuntimeError("SavedModel signature has no keyword input tensors.")
-        input_key = next(iter(kw.keys()))
-        return kw[input_key].shape, input_key
+    def _shape_from_signature(self, signature: object) -> tuple[object, str | None, str]:
+        args, kw = signature.structured_input_signature
+        if kw:
+            input_key = next(iter(kw.keys()))
+            return kw[input_key].shape, input_key, "kw"
+
+        for arg in args:
+            if hasattr(arg, "shape"):
+                return arg.shape, None, "pos"
+
+        raise RuntimeError("SavedModel signature has no usable input tensor specification.")
 
     def _shape_from_callable(self, fn: object):
         function_spec = getattr(fn, "function_spec", None)
@@ -302,7 +307,48 @@ class LatteArtModel:
             sig = function_spec.input_signature
             if sig and len(sig) > 0 and hasattr(sig[0], "shape"):
                 return sig[0].shape
+
+        structured = getattr(fn, "structured_input_signature", None)
+        if structured:
+            args, kw = structured
+            if kw:
+                return next(iter(kw.values())).shape
+            for arg in args:
+                if hasattr(arg, "shape"):
+                    return arg.shape
         return None
+
+    def _invoke_callable(self, fn: object, batch):
+        try:
+            return fn(batch)
+        except TypeError:
+            pass
+
+        function_spec = getattr(fn, "function_spec", None)
+        if function_spec:
+            arg_names = list(getattr(function_spec, "arg_names", []) or [])
+            if arg_names:
+                try:
+                    return fn(**{arg_names[0]: batch})
+                except TypeError:
+                    pass
+
+            input_sig = getattr(function_spec, "input_signature", None)
+            if input_sig and len(input_sig) > 0:
+                name = getattr(input_sig[0], "name", None)
+                if name:
+                    try:
+                        return fn(**{name.split(":")[0]: batch})
+                    except TypeError:
+                        pass
+
+        for key in ("x", "inputs", "input_1"):
+            try:
+                return fn(**{key: batch})
+            except TypeError:
+                continue
+
+        return fn(batch)
 
     def _configure_saved_model_predictor(self, model_path: str, call_endpoint: str):
         saved = self.tf.saved_model.load(model_path)
@@ -321,14 +367,38 @@ class LatteArtModel:
 
         if endpoint_to_use is not None:
             signature = signatures[endpoint_to_use]
-            shape, self.input_key = self._shape_from_signature(signature)
-            self.predict_fn = lambda batch: signature(**{self.input_key: batch})
+            shape, self.input_key, mode = self._shape_from_signature(signature)
+            if mode == "kw":
+                self.predict_fn = lambda batch: signature(**{self.input_key: batch})
+            else:
+                self.predict_fn = lambda batch: signature(batch)
             return shape
 
         if callable(saved):
             LOGGER.warning("SavedModel has no signatures; using callable loaded object directly.")
-            self.predict_fn = lambda batch: saved(batch)
-            return self._shape_from_callable(getattr(saved, "__call__", saved))
+            self.predict_fn = lambda batch: self._invoke_callable(saved, batch)
+            shape = self._shape_from_callable(getattr(saved, "__call__", saved))
+            if shape is not None:
+                return shape
+
+        LOGGER.warning("Attempting callable endpoint attributes on loaded SavedModel object.")
+        attr_candidates = [call_endpoint, "serve", "serving_default", "call", "predict", "__call__"]
+        seen = set()
+        for name in attr_candidates:
+            if name in seen:
+                continue
+            seen.add(name)
+            attr = getattr(saved, name, None)
+            if not callable(attr):
+                continue
+            try:
+                self.predict_fn = lambda batch, fn=attr: self._invoke_callable(fn, batch)
+                shape = self._shape_from_callable(attr)
+                LOGGER.info("Using callable SavedModel attribute endpoint '%s'", name)
+                if shape is not None:
+                    return shape
+            except Exception:
+                continue
 
         LOGGER.warning(
             "SavedModel signatures are empty. Attempting keras.layers.TFSMLayer endpoint resolution."
@@ -342,7 +412,7 @@ class LatteArtModel:
                 self.predict_fn = lambda batch, lyr=layer: lyr(batch)
                 LOGGER.info("Using TFSMLayer endpoint '%s'", candidate)
                 if fn is not None:
-                    shape, self.input_key = self._shape_from_signature(fn)
+                    shape, self.input_key, _ = self._shape_from_signature(fn)
                     return shape
                 return None
             except Exception as exc:  # best-effort endpoint probing
@@ -352,7 +422,7 @@ class LatteArtModel:
         raise RuntimeError(
             "Could not resolve a callable SavedModel endpoint. "
             "Try setting --call-endpoint / LATTE_ART_CALL_ENDPOINT to your exported endpoint "
-            "(commonly 'serve' or 'serving_default')."
+            "(commonly 'serve' or 'serving_default'), or set manual input shape overrides."
         ) from last_error
 
     def _extract_score(self, pred: object) -> float:

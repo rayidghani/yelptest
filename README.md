@@ -26,6 +26,7 @@ Then it fetches Yelp businesses, scores photos with your TensorFlow model, shows
 
 - Python 3.10 or 3.11 recommended (TensorFlow wheel compatibility)
 - TensorFlow model file/folder path available on disk
+- Model path can be a `.keras`/`.h5` file, or a TensorFlow SavedModel directory (Keras 3 fallback uses signature endpoint).
 
 ## Setup
 
@@ -89,6 +90,7 @@ Required:
 
 ```bash
 export LATTE_ART_MODEL_PATH=/path/to/your/model
+export LATTE_ART_CALL_ENDPOINT=serving_default   # optional; for SavedModel endpoint selection
 ```
 
 Optional:
@@ -120,6 +122,7 @@ You can also run the ranking flow directly from the command line:
 python latte_art_ranker.py \
   --location "San Francisco, CA" \
   --model-path /path/to/your/model \
+  --call-endpoint serving_default \
   --business-limit 20 \
   --score-threshold 0.70 \
   --source scrape \

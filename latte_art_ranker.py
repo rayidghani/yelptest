@@ -24,6 +24,7 @@ from urllib.parse import quote_plus, urljoin
 
 import requests
 from bs4 import BeautifulSoup
+import numpy as np
 from PIL import Image
 
 YELP_API_BASE = "https://api.yelp.com/v3"
@@ -221,7 +222,7 @@ class YelpScrapeProvider:
 
 
 class LatteArtModel:
-    def __init__(self, model_path: str):
+    def __init__(self, model_path: str, call_endpoint: str = "serving_default"):
         try:
             import tensorflow as tf  # noqa: PLC0415
         except ImportError as exc:
@@ -231,16 +232,51 @@ class LatteArtModel:
             ) from exc
 
         self.tf = tf
-        self.model = tf.keras.models.load_model(model_path)
+        self.call_endpoint = call_endpoint
+        self.input_key: str | None = None
 
-        shape = self.model.input_shape
-        if isinstance(shape, list):
-            shape = shape[0]
+        try:
+            self.model = tf.keras.models.load_model(model_path)
+            LOGGER.info("Loaded model with keras.models.load_model: %s", model_path)
+            shape = self.model.input_shape
+            if isinstance(shape, list):
+                shape = shape[0]
+            self.predict_fn = lambda batch: self.model(batch, training=False)
+        except (ValueError, OSError) as exc:
+            if "File format not supported" not in str(exc):
+                raise
+            LOGGER.warning(
+                "Keras load_model could not load '%s'. Falling back to SavedModel signature '%s'.",
+                model_path,
+                call_endpoint,
+            )
+            saved = tf.saved_model.load(model_path)
+            if call_endpoint not in saved.signatures:
+                available = ", ".join(saved.signatures.keys())
+                raise RuntimeError(
+                    f"SavedModel endpoint '{call_endpoint}' not found. Available endpoints: {available}"
+                )
+            signature = saved.signatures[call_endpoint]
+            _, kw = signature.structured_input_signature
+            if not kw:
+                raise RuntimeError("SavedModel signature has no keyword input tensors.")
+            self.input_key = next(iter(kw.keys()))
+            shape = kw[self.input_key].shape
+            self.predict_fn = lambda batch: signature(**{self.input_key: batch})
+
         if len(shape) != 4:
             raise ValueError(f"Expected NHWC model input, got {shape}")
         self.input_height = int(shape[1])
         self.input_width = int(shape[2])
         self.channels = int(shape[3])
+
+    def _extract_score(self, pred: object) -> float:
+        if isinstance(pred, dict):
+            if not pred:
+                raise ValueError("Model prediction dictionary was empty")
+            pred = next(iter(pred.values()))
+        arr = np.array(pred)
+        return float(arr.squeeze())
 
     def score_image_bytes(self, image_bytes: bytes) -> float:
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
@@ -252,8 +288,8 @@ class LatteArtModel:
 
         arr = arr / 255.0
         batch = self.tf.expand_dims(arr, axis=0)
-        pred = self.model.predict(batch, verbose=0)
-        return float(pred.squeeze())
+        pred = self.predict_fn(batch)
+        return self._extract_score(pred)
 
 
 def normalize_address(location: dict) -> str:
@@ -426,6 +462,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument("--location", required=True, help="Location string for Yelp search")
     parser.add_argument("--model-path", required=True, help="Path to TensorFlow model")
+    parser.add_argument("--call-endpoint", default=os.getenv("LATTE_ART_CALL_ENDPOINT", "serving_default"), help="SavedModel call endpoint for Keras 3 fallback (default: serving_default)")
     parser.add_argument(
         "--source",
         choices=["api", "scrape"],
@@ -459,7 +496,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         provider = YelpScrapeProvider()
 
-    model = LatteArtModel(model_path=args.model_path)
+    model = LatteArtModel(model_path=args.model_path, call_endpoint=args.call_endpoint)
 
     results = build_results(
         provider=provider,

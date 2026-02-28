@@ -6,9 +6,9 @@
     <title>Latte Art Ranker</title>
     <style>
       body { font-family: Arial, sans-serif; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; }
-      form { display: grid; grid-template-columns: 1fr 180px 180px auto; gap: 0.75rem; align-items: end; }
+      form { display: grid; grid-template-columns: 220px 1fr 160px 160px auto; gap: 0.75rem; align-items: end; }
       label { font-size: 0.9rem; color: #333; display: block; margin-bottom: 0.2rem; }
-      input { width: 100%; padding: 0.5rem; }
+      input, select { width: 100%; padding: 0.5rem; }
       button { padding: 0.55rem 0.9rem; cursor: pointer; }
       table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
       th, td { border: 1px solid #ddd; padding: 0.45rem; text-align: left; }
@@ -18,14 +18,23 @@
     </style>
   </head>
   <body>
-    <h1>Yelp Espresso Latte Art Ranker</h1>
-    <p class="muted">Enter a location, number of businesses, and score threshold.</p>
+    <h1>Espresso Latte Art Ranker</h1>
+    <p class="muted">Choose a data source (Yelp or Google Places), then enter ranking parameters.</p>
 
     {% if error %}
       <div class="error">{{ error }}</div>
     {% endif %}
 
     <form method="post" action="/run">
+      <div>
+        <label for="source">Data Source</label>
+        {% set selected_source = defaults.source if defaults and defaults.source else 'yelp_scrape' %}
+        <select id="source" name="source">
+          <option value="yelp_scrape" {% if selected_source == 'yelp_scrape' or selected_source == 'scrape' %}selected{% endif %}>Yelp (scrape, no key)</option>
+          <option value="yelp_api" {% if selected_source == 'yelp_api' or selected_source == 'api' %}selected{% endif %}>Yelp API</option>
+          <option value="google" {% if selected_source == 'google' %}selected{% endif %}>Google Places API</option>
+        </select>
+      </div>
       <div>
         <label for="location">Location</label>
         <input id="location" name="location" required value="{{ defaults.location if defaults else '' }}" />
@@ -58,7 +67,7 @@
             <th>Good Images</th>
             <th>Business</th>
             <th>Address</th>
-            <th>Yelp URL</th>
+            <th>Listing URL</th>
           </tr>
         </thead>
         <tbody>

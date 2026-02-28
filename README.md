@@ -1,11 +1,11 @@
-# Yelp Espresso Latte Art Ranker (Web App)
+# Espresso Latte Art Ranker (Web App)
 
 This project is now a deployable **web app** where you enter:
 - location
 - number of businesses
 - score threshold
 
-Then it fetches Yelp businesses, scores photos with your TensorFlow model, shows ranked results, and lets you download CSV.
+Then it fetches businesses from Yelp or Google Places, scores photos with your TensorFlow model, shows ranked results, and lets you download CSV.
 
 ## Features
 
@@ -18,9 +18,10 @@ Then it fetches Yelp businesses, scores photos with your TensorFlow model, shows
   - images downloaded
   - images above threshold
 - CSV download from browser
-- Supports data source via env var:
-  - `YELP_SOURCE=scrape` (default, no API key)
-  - `YELP_SOURCE=api` (uses Yelp Fusion API + `YELP_API_KEY`)
+- Supports data source selection via web form, CLI flag, or env vars:
+  - `yelp_scrape` (default, no key)
+  - `yelp_api` (requires `YELP_API_KEY`)
+  - `google` (requires `GOOGLE_PLACES_API_KEY`)
 
 ## Requirements
 
@@ -135,8 +136,10 @@ export LATTE_ART_INPUT_CHANNELS=3
 Optional:
 
 ```bash
-export YELP_SOURCE=scrape          # or api
-export YELP_API_KEY=...            # required if YELP_SOURCE=api
+export BUSINESS_SOURCE=yelp_scrape   # yelp_scrape | yelp_api | google
+export YELP_SOURCE=scrape          # legacy alias supported
+export YELP_API_KEY=...            # required for yelp_api
+export GOOGLE_PLACES_API_KEY=...   # required for google
 export PORT=8080
 export DEFAULT_BUSINESS_LIMIT=20
 export DEFAULT_SCORE_THRESHOLD=0.7
@@ -166,7 +169,7 @@ python latte_art_ranker.py \
   --input-height 224 --input-width 224 --input-channels 3 \
   --business-limit 20 \
   --score-threshold 0.70 \
-  --source scrape \
+  --source yelp_scrape \
   --output-csv latte_art_results.csv
 ```
 
@@ -174,7 +177,8 @@ Notes:
 - For SavedModel directories, Keras 3 may require endpoint selection; if `serving_default` is missing, try `serve` via `LATTE_ART_CALL_ENDPOINT` (or `--call-endpoint` in CLI).
 - If your SavedModel has no signatures/endpoints, set manual shape overrides (`LATTE_ART_INPUT_HEIGHT`, `LATTE_ART_INPUT_WIDTH`, `LATTE_ART_INPUT_CHANNELS` or CLI equivalents).
 - If you still see `Available endpoints: []`, your SavedModel may expose only callable attributes. The loader now probes common callables automatically; if shape inference still fails, set the three input-shape overrides.
-- Use `--source api` with `--yelp-api-key` (or `YELP_API_KEY`) if you want Yelp Fusion API mode.
+- Use `--source yelp_api` with `--yelp-api-key` (or `YELP_API_KEY`) for Yelp Fusion API mode.
+- Use `--source google` with `--google-api-key` (or `GOOGLE_PLACES_API_KEY`) for Google Places mode.
 - Use `--include-non-drink-photos` to score all discovered photos.
 
 
@@ -207,4 +211,5 @@ Use `python app.py` as start command and set env vars in your deployment setting
 - Scraping mode is best-effort and may break if Yelp markup changes.
 - If Yelp scrape requests return 403, set `YELP_SCRAPE_USER_AGENT` to your local Chrome user agent string.
 - Confirm Yelp Terms of Service compliance for your usage.
+- Google Places mode requires billing-enabled Places API credentials.
 - Latte/drink photo filtering remains heuristic unless your model handles non-drink photos robustly.

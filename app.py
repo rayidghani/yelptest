@@ -15,10 +15,12 @@ from flask import Flask, Response, redirect, render_template, request, url_for
 from latte_art_ranker import (
     BusinessResult,
     LatteArtModel,
+    GooglePlacesProvider,
     YelpApiProvider,
     YelpScrapeProvider,
     build_results,
     configure_logging,
+    normalize_source_name,
 )
 
 app = Flask(__name__)
@@ -64,15 +66,22 @@ def get_model() -> LatteArtModel:
     )
 
 
-def get_provider():
-    source = os.getenv("YELP_SOURCE", "scrape").strip().lower()
+def get_provider(source_override: str | None = None):
+    source = source_override or os.getenv("BUSINESS_SOURCE", os.getenv("YELP_SOURCE", "yelp_scrape"))
+    source = normalize_source_name(source.strip().lower())
     timeout = _int_env("REQUEST_TIMEOUT_S", 20)
     LOGGER.info("Selecting provider source=%s timeout=%ss", source, timeout)
-    if source == "api":
+
+    if source == "yelp_api":
         api_key = os.getenv("YELP_API_KEY", "").strip()
         if not api_key:
-            raise RuntimeError("YELP_SOURCE=api requires YELP_API_KEY.")
+            raise RuntimeError("Selected source yelp_api requires YELP_API_KEY.")
         return YelpApiProvider(api_key=api_key, timeout_s=timeout)
+    if source == "google":
+        api_key = os.getenv("GOOGLE_PLACES_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("Selected source google requires GOOGLE_PLACES_API_KEY.")
+        return GooglePlacesProvider(api_key=api_key, timeout_s=timeout)
     return YelpScrapeProvider(timeout_s=timeout)
 
 
@@ -113,6 +122,7 @@ def index():
             "location": "San Francisco, CA",
             "business_limit": _int_env("DEFAULT_BUSINESS_LIMIT", 20),
             "score_threshold": _float_env("DEFAULT_SCORE_THRESHOLD", 0.7),
+            "source": os.getenv("BUSINESS_SOURCE", os.getenv("YELP_SOURCE", "yelp_scrape")),
         },
     )
 
@@ -120,6 +130,7 @@ def index():
 @app.route("/run", methods=["POST"])
 def run():
     location = request.form.get("location", "").strip()
+    source = request.form.get("source", "yelp_scrape").strip().lower()
     if not location:
         return render_template("index.html", error="Location is required.", defaults=request.form)
 
@@ -149,13 +160,14 @@ def run():
 
     try:
         LOGGER.info(
-            "Web run requested: location='%s', business_limit=%d, threshold=%.3f",
+            "Web run requested: source=%s, location='%s', business_limit=%d, threshold=%.3f",
+            source,
             location,
             business_limit,
             score_threshold,
         )
         model = get_model()
-        provider = get_provider()
+        provider = get_provider(source_override=source)
         results = build_results(
             provider=provider,
             model=model,

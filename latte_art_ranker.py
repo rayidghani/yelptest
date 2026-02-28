@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Rank Yelp espresso businesses by latte art quality from their photos.
+"""Rank espresso businesses by latte art quality from their photos.
 
-Supports two data sources:
-- `api`: official Yelp Fusion API (requires API key)
-- `scrape`: parse public Yelp HTML pages (no API key)
+Supports multiple data sources:
+- `yelp_api`: official Yelp Fusion API (requires API key)
+- `yelp_scrape`: parse public Yelp HTML pages (no API key)
+- `google`: Google Places API (requires API key)
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from PIL import Image
 
 YELP_API_BASE = "https://api.yelp.com/v3"
 YELP_WEB_BASE = "https://www.yelp.com"
+GOOGLE_PLACES_BASE = "https://maps.googleapis.com/maps/api/place"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -229,6 +231,64 @@ class YelpScrapeProvider:
             "business_url": "",
             "yelp_url": biz_url,
             "photos": deduped,
+        }
+
+
+class GooglePlacesProvider:
+    """Google Places API provider for espresso businesses + photos."""
+
+    def __init__(self, api_key: str, timeout_s: int = 20) -> None:
+        self.api_key = api_key
+        self.timeout_s = timeout_s
+        self.session = requests.Session()
+
+    def search_espresso(self, location: str, limit: int) -> List[BusinessSummary]:
+        LOGGER.info("[1/6] Google Places search: query='espresso in %s', limit=%d", location, limit)
+        query = f"espresso in {location}"
+        params = {
+            "query": query,
+            "key": self.api_key,
+        }
+        resp = self.session.get(
+            f"{GOOGLE_PLACES_BASE}/textsearch/json", params=params, timeout=self.timeout_s
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        places = payload.get("results", [])[:limit]
+        LOGGER.info("Google Places search returned %d businesses", len(places))
+        return [BusinessSummary(id=p["place_id"]) for p in places if p.get("place_id")]
+
+    def business_details(self, business_id: str) -> dict:
+        LOGGER.info("Fetching business details via Google Places: %s", business_id)
+        fields = "name,formatted_address,url,website,photos"
+        params = {
+            "place_id": business_id,
+            "fields": fields,
+            "key": self.api_key,
+        }
+        resp = self.session.get(
+            f"{GOOGLE_PLACES_BASE}/details/json", params=params, timeout=self.timeout_s
+        )
+        resp.raise_for_status()
+        result = resp.json().get("result", {})
+
+        photos: List[str] = []
+        for photo in result.get("photos", []) or []:
+            ref = photo.get("photo_reference")
+            if not ref:
+                continue
+            photo_url = (
+                f"{GOOGLE_PLACES_BASE}/photo"
+                f"?maxwidth=1200&photo_reference={quote_plus(ref)}&key={quote_plus(self.api_key)}"
+            )
+            photos.append(photo_url)
+
+        return {
+            "name": result.get("name", ""),
+            "address": result.get("formatted_address", ""),
+            "business_url": result.get("website", ""),
+            "yelp_url": result.get("url", ""),
+            "photos": photos,
         }
 
 
@@ -622,11 +682,21 @@ def print_results(results: Sequence[BusinessResult], top_n: int | None = None) -
         )
 
 
+
+
+def normalize_source_name(source: str) -> str:
+    aliases = {
+        "scrape": "yelp_scrape",
+        "api": "yelp_api",
+        "yelp": "yelp_scrape",
+    }
+    return aliases.get(source, source)
+
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Search Yelp espresso businesses and rank by latte art quality."
+        description="Search espresso businesses and rank by latte art quality."
     )
-    parser.add_argument("--location", required=True, help="Location string for Yelp search")
+    parser.add_argument("--location", required=True, help="Location string for business search")
     parser.add_argument("--model-path", required=True, help="Path to TensorFlow model")
     parser.add_argument("--call-endpoint", default=os.getenv("LATTE_ART_CALL_ENDPOINT", "serving_default"), help="SavedModel call endpoint for Keras 3 fallback (default: serving_default)")
     parser.add_argument("--input-height", type=int, default=int(os.getenv("LATTE_ART_INPUT_HEIGHT", "0")) or None, help="Manual model input height when shape cannot be inferred")
@@ -634,11 +704,12 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--input-channels", type=int, default=int(os.getenv("LATTE_ART_INPUT_CHANNELS", "0")) or None, help="Manual model input channels when shape cannot be inferred")
     parser.add_argument(
         "--source",
-        choices=["api", "scrape"],
-        default="scrape",
-        help="Business data source. Use 'scrape' to avoid Yelp API key.",
+        choices=["yelp_api", "yelp_scrape", "google", "api", "scrape"],
+        default=os.getenv("BUSINESS_SOURCE", os.getenv("YELP_SOURCE", "yelp_scrape")),
+        help="Business data source: yelp_api, yelp_scrape, or google (legacy aliases: api/scrape).",
     )
     parser.add_argument("--yelp-api-key", default=os.getenv("YELP_API_KEY"))
+    parser.add_argument("--google-api-key", default=os.getenv("GOOGLE_PLACES_API_KEY"))
     parser.add_argument("--business-limit", type=int, default=20)
     parser.add_argument("--score-threshold", type=float, default=0.7)
     parser.add_argument(
@@ -655,13 +726,19 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     configure_logging(os.getenv("LOG_LEVEL", "INFO"))
     args = parse_args(argv or sys.argv[1:])
+    args.source = normalize_source_name(args.source)
     LOGGER.info("CLI started with source=%s, limit=%d, threshold=%.3f", args.source, args.business_limit, args.score_threshold)
 
-    if args.source == "api":
+    if args.source == "yelp_api":
         if not args.yelp_api_key:
             print("Missing Yelp API key. Pass --yelp-api-key or set YELP_API_KEY.", file=sys.stderr)
             return 2
         provider: BusinessProvider = YelpApiProvider(api_key=args.yelp_api_key)
+    elif args.source == "google":
+        if not args.google_api_key:
+            print("Missing Google Places API key. Pass --google-api-key or set GOOGLE_PLACES_API_KEY.", file=sys.stderr)
+            return 2
+        provider = GooglePlacesProvider(api_key=args.google_api_key)
     else:
         provider = YelpScrapeProvider()
 

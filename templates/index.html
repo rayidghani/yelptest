@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Latte Art Ranker</title>
+    <style>
+      body { font-family: Arial, sans-serif; max-width: 1100px; margin: 2rem auto; padding: 0 1rem; }
+      form { display: grid; grid-template-columns: 220px 1fr 160px 160px auto; gap: 0.75rem; align-items: end; }
+      label { font-size: 0.9rem; color: #333; display: block; margin-bottom: 0.2rem; }
+      input, select { width: 100%; padding: 0.5rem; }
+      button { padding: 0.55rem 0.9rem; cursor: pointer; }
+      table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+      th, td { border: 1px solid #ddd; padding: 0.45rem; text-align: left; }
+      th { background: #f4f4f4; }
+      .error { background: #ffe7e7; color: #8a1c1c; padding: 0.6rem; border: 1px solid #f1b1b1; margin: 1rem 0; }
+      .muted { color: #666; font-size: 0.9rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Espresso Latte Art Ranker</h1>
+    <p class="muted">Choose a data source (Yelp or Google Places), then enter ranking parameters.</p>
+
+    {% if error %}
+      <div class="error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="/run">
+      <div>
+        <label for="source">Data Source</label>
+        {% set selected_source = defaults.source if defaults and defaults.source else 'yelp_scrape' %}
+        <select id="source" name="source">
+          <option value="yelp_scrape" {% if selected_source == 'yelp_scrape' or selected_source == 'scrape' %}selected{% endif %}>Yelp (scrape, no key)</option>
+          <option value="yelp_api" {% if selected_source == 'yelp_api' or selected_source == 'api' %}selected{% endif %}>Yelp API</option>
+          <option value="google" {% if selected_source == 'google' %}selected{% endif %}>Google Places API</option>
+        </select>
+      </div>
+      <div>
+        <label for="location">Location</label>
+        <input id="location" name="location" required value="{{ defaults.location if defaults else '' }}" />
+      </div>
+      <div>
+        <label for="business_limit"># Businesses</label>
+        <input id="business_limit" name="business_limit" type="number" min="1" max="50" step="1" value="{{ defaults.business_limit if defaults else 20 }}" />
+      </div>
+      <div>
+        <label for="score_threshold">Score Threshold</label>
+        <input id="score_threshold" name="score_threshold" type="number" min="0" max="1" step="0.01" value="{{ defaults.score_threshold if defaults else 0.7 }}" />
+      </div>
+      <div>
+        <button type="submit">Run Ranking</button>
+      </div>
+    </form>
+
+    {% if results is defined %}
+      <h2>Results ({{ results|length }})</h2>
+      <form method="post" action="/download">
+        <input type="hidden" name="csv_text" value="{{ csv_text }}" />
+        <button type="submit">Download CSV</button>
+      </form>
+      <table>
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Score</th>
+            <th>Images</th>
+            <th>Good Images</th>
+            <th>Business</th>
+            <th>Address</th>
+            <th>Listing URL</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in results %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>{{ '%.4f'|format(r.aggregate_score) }}</td>
+            <td>{{ r.images_downloaded }}</td>
+            <td>{{ r.images_above_threshold }}</td>
+            <td>{{ r.name }}</td>
+            <td>{{ r.address }}</td>
+            <td><a href="{{ r.yelp_url }}" target="_blank" rel="noopener">Link</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </body>
+</html>

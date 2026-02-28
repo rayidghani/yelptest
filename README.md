@@ -84,6 +84,41 @@ On macOS, also verify architecture:
 python -c "import platform; print(platform.machine())"  # should be arm64 on Apple Silicon
 ```
 
+## Train a new latte-art model (good vs bad)
+
+You can train a binary scoring model and plug it directly into this app.
+
+Dataset layout:
+
+```text
+/path/to/dataset/
+  good/
+    *.jpg|png
+  bad/
+    *.jpg|png
+```
+
+Training command:
+
+```bash
+python train_latte_art_model.py \
+  --dataset-dir /path/to/dataset \
+  --output-model models/latte_art_model.keras \
+  --img-size 224 \
+  --batch-size 32 \
+  --epochs 12 \
+  --fine-tune
+```
+
+Then point the app/CLI at the trained model:
+
+```bash
+export LATTE_ART_MODEL_PATH=$PWD/models/latte_art_model.keras
+python app.py
+```
+
+The trained model outputs a sigmoid score in `[0, 1]` where higher means more likely to be good latte art.
+
 ## Environment variables
 
 Required:
@@ -108,6 +143,7 @@ export DEFAULT_SCORE_THRESHOLD=0.7
 export REQUEST_TIMEOUT_S=20
 export REQUEST_SLEEP_S=0.2
 export LOG_LEVEL=INFO
+export YELP_SCRAPE_USER_AGENT="Mozilla/5.0 ... Chrome/... Safari/537.36"
 ```
 
 ## Web usage
@@ -169,5 +205,6 @@ Use `python app.py` as start command and set env vars in your deployment setting
 - On Apple Silicon, use ARM64 Python plus `tensorflow-macos`/`tensorflow-metal` to avoid AVX/jaxlib x86 wheel crashes.
 - Console logging is enabled for both CLI and web app; adjust verbosity with `LOG_LEVEL` (e.g., `DEBUG`, `INFO`).
 - Scraping mode is best-effort and may break if Yelp markup changes.
+- If Yelp scrape requests return 403, set `YELP_SCRAPE_USER_AGENT` to your local Chrome user agent string.
 - Confirm Yelp Terms of Service compliance for your usage.
 - Latte/drink photo filtering remains heuristic unless your model handles non-drink photos robustly.

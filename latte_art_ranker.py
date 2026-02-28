@@ -106,12 +106,23 @@ class YelpScrapeProvider:
 
     def __init__(self, timeout_s: int = 20) -> None:
         self.session = requests.Session()
+        scrape_user_agent = os.getenv(
+            "YELP_SCRAPE_USER_AGENT",
+            (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/123.0.0.0 Safari/537.36"
+            ),
+        )
         self.session.headers.update(
             {
-                "User-Agent": (
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-                )
+                "User-Agent": scrape_user_agent,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+                "Upgrade-Insecure-Requests": "1",
+                "Referer": "https://www.yelp.com/",
             }
         )
         self.timeout_s = timeout_s
